@@ -1,0 +1,129 @@
+import cloudscraper
+from bs4 import BeautifulSoup
+import sqlite3
+import requests
+import time
+
+TOKEN="8621392454:AAHJk6WRe9FdYR2NontlywPYyN2ukWygluM"
+CHAT_ID="1533459677"
+
+URL="https://www.hepsiburada.com/magaza/hepsiburada?kategori=371965"
+
+scraper=cloudscraper.create_scraper()
+
+db=sqlite3.connect("products.db")
+cursor=db.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS products(
+link TEXT PRIMARY KEY,
+name TEXT,
+price REAL
+)
+""")
+
+db.commit()
+
+def temizle(price):
+
+    price=price.replace("TL","").replace(".","").replace(",",".")
+    price="".join(c for c in price if c.isdigit() or c==".")
+
+    try:
+        return float(price)
+    except:
+        return 0
+
+def telegram(msg):
+
+    url=f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+
+    requests.post(url,data={
+    "chat_id":CHAT_ID,
+    "text":msg,
+    "parse_mode":"HTML"
+})
+
+def tara():
+
+    r=scraper.get(URL)
+    soup=BeautifulSoup(r.text,"html.parser")
+
+    items=soup.find_all("li",class_="productListContent-item")
+
+    for i in items:
+
+        try:
+
+            name=i.find("h3").text.strip()
+
+            price=i.find(
+            "div",
+            {"data-test-id":"price-current-price"}
+            ).text
+
+            price=temizle(price)
+
+            link="https://www.hepsiburada.com"+i.find("a")["href"]
+
+            cursor.execute(
+            "SELECT price FROM products WHERE link=?",
+            (link,)
+            )
+
+            row=cursor.fetchone()
+
+            if row is None:
+
+                cursor.execute(
+                "INSERT INTO products VALUES(?,?,?)",
+                (link,name,price)
+                )
+
+                db.commit()
+
+            else:
+
+                old=row[0]
+
+                if old>0:
+
+                    discount=((old-price)/old)*100
+
+                    if discount>=25:
+
+                        msg=f"""
+🔥 FIRSAT
+
+{name}
+
+Eski: {old:.2f} TL
+Yeni: {price:.2f} TL
+
+%{discount:.0f} indirim
+
+{link}
+"""
+
+                        telegram(msg)
+
+                cursor.execute(
+                "UPDATE products SET price=? WHERE link=?",
+                (price,link)
+                )
+
+                db.commit()
+
+        except:
+            pass
+
+print("BOT START")
+
+while True:
+
+    try:
+        tara()
+    except Exception as e:
+        print(e)
+
+    time.sleep(300)
